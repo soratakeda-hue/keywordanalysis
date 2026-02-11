@@ -244,48 +244,15 @@ def write_sheet_now_only(
         worksheet.write(current_row, current_col, title)
 
         # ---- sort ----
-        # 合算キーワードが設定されている場合、そのキーワードを含む行を先頭に配置
-        if grouping_rules:
-            # 合算キーワードのリストを作成
-            grouping_keywords = []
-            for rule in grouping_rules:
-                keywords = rule.get("include", [])
-                grouping_keywords.extend(keywords)
-            
-            # キーワードを含む行と含まない行を分ける
-            mask_grouped = now_df.index.str.contains('|'.join(grouping_keywords), na=False, regex=True)
-            df_grouped = now_df[mask_grouped]
-            df_not_grouped = now_df[~mask_grouped]
-            
-            # それぞれをソートして結合（合算キーワードを含む行を先頭に）
-            if sort_key == "cpa" and ascending:
-                # CPA昇順の場合、CVが0またはCPAが0/NaNのものは後ろに回す
-                mask_valid_grouped = (df_grouped["cv"] > 0) & (df_grouped["cpa"] > 0) & (df_grouped["cpa"].notna())
-                df_valid_grouped = df_grouped[mask_valid_grouped].sort_values(sort_key, ascending=ascending)
-                df_invalid_grouped = df_grouped[~mask_valid_grouped]
-                df_grouped_sorted = pd.concat([df_valid_grouped, df_invalid_grouped])
-                
-                mask_valid_not_grouped = (df_not_grouped["cv"] > 0) & (df_not_grouped["cpa"] > 0) & (df_not_grouped["cpa"].notna())
-                df_valid_not_grouped = df_not_grouped[mask_valid_not_grouped].sort_values(sort_key, ascending=ascending)
-                df_invalid_not_grouped = df_not_grouped[~mask_valid_not_grouped]
-                df_not_grouped_sorted = pd.concat([df_valid_not_grouped, df_invalid_not_grouped])
-                
-                now_sorted = pd.concat([df_grouped_sorted, df_not_grouped_sorted])
-            else:
-                df_grouped_sorted = df_grouped.sort_values(sort_key, ascending=ascending)
-                df_not_grouped_sorted = df_not_grouped.sort_values(sort_key, ascending=ascending)
-                now_sorted = pd.concat([df_grouped_sorted, df_not_grouped_sorted])
+        # CPA昇順の場合、CVが0またはCPAが0/NaNのものは後ろに回す
+        if sort_key == "cpa" and ascending:
+            # CVが0またはCPAが0/NaNのものとそうでないものを分ける
+            mask_valid = (now_df["cv"] > 0) & (now_df["cpa"] > 0) & (now_df["cpa"].notna())
+            df_valid = now_df[mask_valid].sort_values(sort_key, ascending=ascending)
+            df_invalid = now_df[~mask_valid]
+            now_sorted = pd.concat([df_valid, df_invalid])
         else:
-            # 既存のソートロジック（合算キーワードが設定されていない場合）
-            # CPA昇順の場合、CVが0またはCPAが0/NaNのものは後ろに回す
-            if sort_key == "cpa" and ascending:
-                # CVが0またはCPAが0/NaNのものとそうでないものを分ける
-                mask_valid = (now_df["cv"] > 0) & (now_df["cpa"] > 0) & (now_df["cpa"].notna())
-                df_valid = now_df[mask_valid].sort_values(sort_key, ascending=ascending)
-                df_invalid = now_df[~mask_valid]
-                now_sorted = pd.concat([df_valid, df_invalid])
-            else:
-                now_sorted = now_df.sort_values(sort_key, ascending=ascending)
+            now_sorted = now_df.sort_values(sort_key, ascending=ascending)
 
         # ---- 今期データ（日本語ヘッダー付き）----
         now_data = now_sorted.reset_index()[NOW_COLUMNS].copy()
