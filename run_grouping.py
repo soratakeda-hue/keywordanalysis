@@ -184,8 +184,9 @@ def main() -> None:
         a = period_a.campaign_keyword.query("campaign_name == @campaign")
         b = period_b.campaign_keyword.query("campaign_name == @campaign")
 
-        if a.empty or b.empty:
-            continue
+        if a.empty:
+            continue  # 後期間にデータなし → スキップ
+        is_b_only = b.empty  # 後期間のみフラグ
 
         # 外部ファイルからキャンペーン単位の合計値を取得
         # 合算が有効な場合、合算前のキャンペーン名で取得する必要がある
@@ -208,18 +209,22 @@ def main() -> None:
             )
         else:
             # 合算が無効な場合、キャンペーン名で直接突合
-            if campaign in original_campaign_totals_a and campaign in original_campaign_totals_b:
-                # 外部ファイルから取得
+            # 後期間totals
+            if campaign in original_campaign_totals_a:
                 totals_a_c = original_campaign_totals_a[campaign]
-                totals_b_c = original_campaign_totals_b[campaign]
             else:
-                # 外部ファイルにない場合、キーワードデータから合計値を計算
                 totals_a_c = analyzer.TotalsData(
                     imp=a["imp"].sum(),
                     click=a["click"].sum(),
                     cost=a["cost"].sum(),
                     cv=a["cv"].sum(),
                 )
+            # 前期間totals: 後期間のみキャンペーンはゼロ埋め
+            if is_b_only:
+                totals_b_c = analyzer.TotalsData(imp=0.0, click=0.0, cost=0.0, cv=0.0)
+            elif campaign in original_campaign_totals_b:
+                totals_b_c = original_campaign_totals_b[campaign]
+            else:
                 totals_b_c = analyzer.TotalsData(
                     imp=b["imp"].sum(),
                     click=b["click"].sum(),
@@ -228,16 +233,21 @@ def main() -> None:
                 )
 
         now = analyzer.add_share(a, totals_a_c).set_index("keyword")
-        prev = analyzer.add_share(b, totals_b_c).set_index("keyword")
-        delta = analyzer.add_share_delta(
-            a,
-            b,
-            totals_a_c,
-            totals_b_c,
-            keys=["campaign_name", "keyword"],
-        ).set_index("keyword")
 
-        campaign_sheets[campaign] = (now, prev, delta, totals_a_c, totals_b_c)
+        if is_b_only:
+            prev = pd.DataFrame()
+            delta = pd.DataFrame()
+        else:
+            prev = analyzer.add_share(b, totals_b_c).set_index("keyword")
+            delta = analyzer.add_share_delta(
+                a,
+                b,
+                totals_a_c,
+                totals_b_c,
+                keys=["campaign_name", "keyword"],
+            ).set_index("keyword")
+
+        campaign_sheets[campaign] = (now, prev, delta, totals_a_c, totals_b_c, is_b_only)
 
     # ---------- Excel ----------
     safe_account_name = _sanitize_filename_component(account_name)
@@ -286,46 +296,48 @@ def main() -> None:
                 normal_campaigns.append((campaign, data))
         
         # 合算されたキャンペーンを先に作成
-        for campaign, (now_df, prev_df, delta_df, totals_a_c, totals_b_c) in grouped_campaigns:
+        for campaign, (now_df, prev_df, delta_df, totals_a_c, totals_b_c, is_b_only) in grouped_campaigns:
             # Excelのシート名に使用できない文字を除去
             invalid_chars = ['[', ']', ':', '*', '?', '/', '\\']
             base_name = campaign
             for char in invalid_chars:
                 base_name = base_name.replace(char, '_')
-            
+
             # 期間文字列（例：0101-0131）は9文字、Excelのシート名は31文字制限
             period_suffix_len = len(f"_{period_a_str}")
             max_base_len = 31 - period_suffix_len
             if len(base_name) > max_base_len:
                 base_name = base_name[:max_base_len]
-            
+
             # キャンペーン全体のCPA平均を計算（加重平均）
             campaign_avg_cpa_a = totals_a_c.cost / totals_a_c.cv if totals_a_c.cv > 0 else 0
-            campaign_avg_cpa_b = totals_b_c.cost / totals_b_c.cv if totals_b_c.cv > 0 else 0
-            
+
             write_sheet_now_only(writer, f"{base_name}_{period_a_str}", now_df, campaign_avg_cpa_a, grouping_rules)
-            write_sheet_now_only(writer, f"{base_name}_{period_b_str}", prev_df, campaign_avg_cpa_b, grouping_rules)
-        
+            if not is_b_only:
+                campaign_avg_cpa_b = totals_b_c.cost / totals_b_c.cv if totals_b_c.cv > 0 else 0
+                write_sheet_now_only(writer, f"{base_name}_{period_b_str}", prev_df, campaign_avg_cpa_b, grouping_rules)
+
         # 通常のキャンペーンを作成
-        for campaign, (now_df, prev_df, delta_df, totals_a_c, totals_b_c) in normal_campaigns:
+        for campaign, (now_df, prev_df, delta_df, totals_a_c, totals_b_c, is_b_only) in normal_campaigns:
             # Excelのシート名に使用できない文字を除去
             invalid_chars = ['[', ']', ':', '*', '?', '/', '\\']
             base_name = campaign
             for char in invalid_chars:
                 base_name = base_name.replace(char, '_')
-            
+
             # 期間文字列（例：0101-0131）は9文字、Excelのシート名は31文字制限
             period_suffix_len = len(f"_{period_a_str}")
             max_base_len = 31 - period_suffix_len
             if len(base_name) > max_base_len:
                 base_name = base_name[:max_base_len]
-            
+
             # キャンペーン全体のCPA平均を計算（加重平均）
             campaign_avg_cpa_a = totals_a_c.cost / totals_a_c.cv if totals_a_c.cv > 0 else 0
-            campaign_avg_cpa_b = totals_b_c.cost / totals_b_c.cv if totals_b_c.cv > 0 else 0
-            
+
             write_sheet_now_only(writer, f"{base_name}_{period_a_str}", now_df, campaign_avg_cpa_a, grouping_rules)
-            write_sheet_now_only(writer, f"{base_name}_{period_b_str}", prev_df, campaign_avg_cpa_b, grouping_rules)
+            if not is_b_only:
+                campaign_avg_cpa_b = totals_b_c.cost / totals_b_c.cv if totals_b_c.cv > 0 else 0
+                write_sheet_now_only(writer, f"{base_name}_{period_b_str}", prev_df, campaign_avg_cpa_b, grouping_rules)
 
     print(f"Excel 出力完了: {output_path}")
 

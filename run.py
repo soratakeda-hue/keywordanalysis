@@ -1060,12 +1060,22 @@ def main() -> None:
     # ---------- campaign ----------
     campaign_sheets = {}
 
-    for campaign in period_a.campaign_keyword["campaign_name"].unique():
+    all_campaigns = sorted(
+        set(period_a.campaign_keyword["campaign_name"].unique())
+        | set(period_b.campaign_keyword["campaign_name"].unique())
+    )
+    for campaign in all_campaigns:
         a = period_a.campaign_keyword.query("campaign_name == @campaign")
         b = period_b.campaign_keyword.query("campaign_name == @campaign")
 
-        if a.empty or b.empty:
+        if a.empty and b.empty:
             continue
+
+        # 片方が空の場合、同じスキーマの空DataFrameで補完
+        if a.empty:
+            a = b.iloc[:0].copy()
+        if b.empty:
+            b = a.iloc[:0].copy()
 
         # 外部ファイルからキャンペーン単位の合計値を取得
         # 合算が有効な場合、合算前のキャンペーン名で取得する必要がある
@@ -1164,7 +1174,8 @@ def main() -> None:
             campaign_avg_cpa_b = totals_b_c.cost / totals_b_c.cv if totals_b_c.cv > 0 else 0
             
             write_sheet_now_only(writer, f"{base_name}_{period_a_str}", now_df, campaign_avg_cpa_a, grouping_rules_for_sheet)
-            write_sheet_now_only(writer, f"{base_name}_{period_b_str}", prev_df, campaign_avg_cpa_b, grouping_rules_for_sheet)
+            if not prev_df.empty:
+                write_sheet_now_only(writer, f"{base_name}_{period_b_str}", prev_df, campaign_avg_cpa_b, grouping_rules_for_sheet)
         
         # キャンペーン合算シート（USE_CAMPAIGN_GROUPがTrueの場合）
         if config.USE_CAMPAIGN_GROUP:

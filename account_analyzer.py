@@ -323,115 +323,100 @@ def select_keyword_files(excel_files: List[Path], period_a_dir: Path, period_b_d
     print("Enterキーでスキップ（既存のファイルがあれば使用します）")
     user_input = input("> ").strip()
     
+
     selected_files = []
+    selected_file_numbers = []
     if user_input:
         try:
             for part in user_input.split(","):
                 part = part.strip()
                 if "-" in part:
-                    # 範囲指定
                     start, end = part.split("-")
                     selected_indices = range(int(start.strip()), int(end.strip()) + 1)
                 else:
                     selected_indices = [int(part.strip())]
-                
                 for idx in selected_indices:
                     if 1 <= idx <= display_count:
                         selected_files.append(file_list[idx - 1][1])  # [1]はexcel_file
+                        selected_file_numbers.append(idx)
                     else:
                         print(f"⚠ 番号 {idx} は無効です（1-{display_count}の範囲で指定してください）")
         except ValueError:
             print("⚠ 入力が無効です。スキップします。")
             return
-        
-        if not selected_files:
-            print("\nファイルが選択されませんでした。")
-            if existing_a or existing_b:
-                print("既存のファイルを使用して分析を続行します。")
-            else:
-                print("既存のファイルも見つかりませんでした。")
-                print("手動でファイルを配置してください。")
-            return
-        
-        if selected_files:
-            print(f"\n選択されたファイル: {len(selected_files)}個")
-            
-            # 後期間と前期間に分類するかユーザーに確認
-            print("\nこれらのファイルを後期間と前期間に分類しますか？")
-            print("1. 自動分類（日付で判定）")
-            print("2. 手動で指定")
-            print("3. すべて後期間に入れる")
-            print("4. すべて前期間に入れる")
-            choice = input("選択 (1-4, Enter=スキップ): ").strip()
-            
+
+        # 分類ループ（元の番号で指定できるようにする）
+        while True:
+            print("\n後期間・前期間に分類するファイルを指定してください。")
+            print("選択したファイル（元の番号で指定してください）:")
+            for orig_idx, excel_file in zip(selected_file_numbers, selected_files):
+                print(f"  {orig_idx}. {excel_file.name}")
+            print("\n後期間に入れるファイルの番号を入力してください（上記元の番号。カンマ区切り、範囲可。例: 3,4 または 3-4）:")
+            period_a_indices_input = input("> ").strip()
             period_a_files = []
             period_b_files = []
-            
-            if choice == "1":
-                # 自動分類
-                for excel_file in selected_files:
-                    date_match = re.search(r"(\d{4})-(\d{2})-(\d{2})|(\d{8})", excel_file.name)
-                    if date_match:
+            valid_indices = set(selected_file_numbers)
+            invalid_input = False
+            period_a_indices = set()
+            if period_a_indices_input:
+                for part in period_a_indices_input.split(","):
+                    part = part.strip()
+                    if "-" in part:
                         try:
-                            if date_match.group(1):  # YYYY-MM-DD形式
-                                file_date = datetime.strptime(f"{date_match.group(1)}{date_match.group(2)}{date_match.group(3)}", "%Y%m%d")
-                            else:  # YYYYMMDD形式
-                                file_date = datetime.strptime(date_match.group(4), "%Y%m%d")
-                            
-                            threshold = datetime(2025, 1, 1)
-                            if file_date >= threshold:
-                                period_a_files.append(excel_file)
-                            else:
-                                period_b_files.append(excel_file)
-                        except ValueError:
-                            period_a_files.append(excel_file)
-                    else:
-                        period_a_files.append(excel_file)
-            
-            elif choice == "2":
-                # 手動で指定
-                print("\n後期間に入れるファイルの番号を入力してください:")
-                period_a_indices_input = input("> ").strip()
-                if period_a_indices_input:
-                    period_a_indices = set()
-                    for part in period_a_indices_input.split(","):
-                        part = part.strip()
-                        if "-" in part:
                             start, end = part.split("-")
-                            period_a_indices.update(range(int(start.strip()), int(end.strip()) + 1))
-                        else:
-                            period_a_indices.add(int(part.strip()))
-                    
-                    for i, excel_file in enumerate(selected_files, 1):
-                        if i in period_a_indices:
-                            period_a_files.append(excel_file)
-                        else:
-                            period_b_files.append(excel_file)
+                            start = int(start.strip())
+                            end = int(end.strip())
+                            if start not in valid_indices or end not in valid_indices or start > end:
+                                invalid_input = True
+                                break
+                            period_a_indices.update(range(start, end + 1))
+                        except Exception:
+                            invalid_input = True
+                            break
+                    else:
+                        try:
+                            idx = int(part.strip())
+                            if idx not in valid_indices:
+                                invalid_input = True
+                                break
+                            period_a_indices.add(idx)
+                        except Exception:
+                            invalid_input = True
+                            break
+                if invalid_input:
+                    print("⚠ 無効な番号が含まれています。上記元の番号で再入力してください。\n")
+                    continue
+            # 分類
+            for orig_idx, excel_file in zip(selected_file_numbers, selected_files):
+                if orig_idx in period_a_indices:
+                    period_a_files.append(excel_file)
                 else:
-                    period_b_files = selected_files
-            
-            elif choice == "3":
-                period_a_files = selected_files
-            
-            elif choice == "4":
-                period_b_files = selected_files
-            else:
-                # 選択が無効な場合はスキップ
-                print("選択が無効です。スキップします。")
-                return
-            
-            # ファイルをコピー
-            if period_a_files:
-                for excel_file in period_a_files:
-                    dest = period_a_dir / excel_file.name
-                    print(f"[移動] {excel_file.name} → {period_a_dir}")
-                    shutil.copy2(excel_file, dest)
-            
-            if period_b_files:
-                for excel_file in period_b_files:
-                    dest = period_b_dir / excel_file.name
-                    print(f"[移動] {excel_file.name} → {period_b_dir}")
-                    shutil.copy2(excel_file, dest)
+                    period_b_files.append(excel_file)
+
+            print("\n分類結果:")
+            print("  後期間:")
+            for f in period_a_files:
+                print(f"    - {f.name}")
+            print("  前期間:")
+            for f in period_b_files:
+                print(f"    - {f.name}")
+
+            confirm = input("この分類でよろしいですか？ (y/n): ").strip().lower()
+            if confirm == "y":
+                break
+
+        # ファイルをコピー
+        if period_a_files:
+            for excel_file in period_a_files:
+                dest = period_a_dir / excel_file.name
+                print(f"[移動] {excel_file.name} → {period_a_dir}")
+                shutil.copy2(excel_file, dest)
+
+        if period_b_files:
+            for excel_file in period_b_files:
+                dest = period_b_dir / excel_file.name
+                print(f"[移動] {excel_file.name} → {period_b_dir}")
+                shutil.copy2(excel_file, dest)
 
 
 def move_keyword_files(excel_files: List[Path], period_a_dir: Path, period_b_dir: Path):
